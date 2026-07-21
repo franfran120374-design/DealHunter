@@ -1,4 +1,5 @@
+fastapi
+uvicorn
 requests
-pandas
 python-dotenv
-serpapi
+google-search-results
