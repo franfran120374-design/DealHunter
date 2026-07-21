@@ -1,0 +1,23 @@
+name: DealHunter - Health check des sources
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # tous les jours à 8h UTC
+  workflow_dispatch: {}  # permet aussi de le lancer manuellement depuis l'onglet Actions
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests
+
+      - name: Vérifier les sources de prix
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        run: python healthcheck.py
