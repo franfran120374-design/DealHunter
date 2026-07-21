@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DealHunter</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #f0f2f5; line-height: 1.6; }
+  .box { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.12); }
+  h1 { color: #2c3e50; margin-bottom: 5px; }
+  .subtitle { color: #7f8c8d; margin-bottom: 25px; }
+  form { display: flex; gap: 10px; margin-bottom: 10px; }
+  input[type=text] { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #ddd; font-size: 1em; }
+  button { padding: 12px 22px; border: none; border-radius: 10px; background: #ff9500; color: white; font-weight: 600; cursor: pointer; }
+  button:disabled { background: #ccc; }
+  label.check { display: flex; align-items: center; gap: 6px; font-size: 0.9em; color: #555; margin-bottom: 20px; }
+  .offre { padding: 14px 16px; border-radius: 12px; border: 1px solid #eee; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .offre.bonne { border-left: 5px solid #27ae60; background: #f4fdf6; }
+  .offre .titre { font-weight: 600; font-size: 0.95em; }
+  .offre .meta { font-size: 0.8em; color: #7f8c8d; }
+  .prix { font-weight: 700; font-size: 1.1em; white-space: nowrap; }
+  .badge-fake { background: #fff3e0; color: #b8600a; padding: 2px 8px; border-radius: 6px; font-size: 0.75em; font-weight: 600; }
+  .warning { background: #fff3e0; border-left: 5px solid #ff9500; padding: 12px 16px; border-radius: 0 12px 12px 0; margin: 15px 0; font-size: 0.9em; }
+  .section-title { font-weight: 700; margin: 20px 0 10px; color: #2c3e50; }
+  #status { color: #7f8c8d; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>🎯 DealHunter</h1>
+  <p class="subtitle">Comparateur de prix — neuf vs occasion, données réelles uniquement</p>
+
+  <form id="searchForm">
+    <input type="text" id="query" placeholder="Ex : iPhone 13 128Go" required>
+    <button type="submit" id="submitBtn">Chercher</button>
+  </form>
+  <label class="check">
+    <input type="checkbox" id="verify"> Vérification IA des bonnes affaires (plus lent, détecte les annonces suspectes)
+  </label>
+
+  <div id="status"></div>
+  <div id="results"></div>
+</div>
+
+<script>
+// Remplace par l'URL de ton service DealHunter API déployé sur Render
+const API_URL = "https://dealhunter-api.onrender.com";
+
+const form = document.getElementById('searchForm');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const btn = document.getElementById('submitBtn');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = document.getElementById('query').value.trim();
+  const verify = document.getElementById('verify').checked;
+  if (!q) return;
+
+  btn.disabled = true;
+  resultsEl.innerHTML = '';
+  statusEl.textContent = verify ? '🔍 Recherche + vérification IA en cours (peut prendre 15-20s)…' : '🔍 Recherche en cours…';
+
+  try {
+    const url = `${API_URL}/search?q=${encodeURIComponent(q)}&verify=${verify}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Erreur ${resp.status}`);
+    const data = await resp.json();
+    render(data);
+  } catch (err) {
+    statusEl.textContent = '';
+    resultsEl.innerHTML = `<div class="warning">❌ Impossible de contacter l'API DealHunter (${err.message}). Le service Render met parfois ~1 min à se réveiller — réessaie.</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function render(data) {
+  statusEl.textContent = '';
+  let html = '';
+
+  if (!data.cle_serpapi_configuree) {
+    html += `<div class="warning">⚠️ Clé SerpAPI non configurée côté serveur — aucun résultat neuf disponible.</div>`;
+  }
+  if (data.sources_indisponibles && data.sources_indisponibles.length) {
+    html += `<div class="warning">⚠️ Sources indisponibles pour cette recherche : ${data.sources_indisponibles.join(', ')}. Les résultats ci-dessous ne portent que sur les sources réellement interrogées avec succès.</div>`;
+  }
+
+  if (data.prix_neuf_min) {
+    html += `<div class="section-title">Prix neuf le plus bas : ${data.prix_neuf_min} €</div>`;
+  }
+
+  if (data.bonnes_affaires && data.bonnes_affaires.length) {
+    html += `<div class="section-title">💰 Bonnes affaires détectées</div>`;
+    data.bonnes_affaires.forEach(o => html += offreHtml(o, true));
+  }
+
+  if (data.offres_occasion && data.offres_occasion.length) {
+    html += `<div class="section-title">Toutes les offres d'occasion</div>`;
+    data.offres_occasion.forEach(o => {
+      if (!data.bonnes_affaires.includes(o)) html += offreHtml(o, false);
+    });
+  } else {
+    html += `<div class="warning">Aucune offre d'occasion trouvée (eBay/BackMarket indisponibles ou pas de résultat pour cette recherche).</div>`;
+  }
+
+  resultsEl.innerHTML = html || '<p>Aucun résultat.</p>';
+}
+
+function offreHtml(o, bonne) {
+  const verif = o.verification_ia
+    ? (o.verification_ia.suspect
+        ? `<div class="badge-fake">⚠️ suspect : ${o.verification_ia.raison}</div>`
+        : `<div style="font-size:0.75em;color:#27ae60">✓ vérifié IA</div>`)
+    : '';
+  return `
+    <div class="offre ${bonne ? 'bonne' : ''}">
+      <div>
+        <div class="titre">${o.titre}</div>
+        <div class="meta">${o.site} · ${o.etat || ''} ${o.reduction_pct ? '· -' + o.reduction_pct + '%' : ''}</div>
+        ${verif}
+      </div>
+      <div style="text-align:right">
+        <div class="prix">${o.prix} €</div>
+        <a href="${o.url}" target="_blank" style="font-size:0.8em">Voir l'annonce →</a>
+      </div>
+    </div>`;
+}
+</script>
+</body>
+</html>
