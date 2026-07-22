@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DealHunter</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #f0f2f5; line-height: 1.6; }
+  .box { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.12); }
+  h1 { color: #2c3e50; margin-bottom: 5px; }
+  .subtitle { color: #7f8c8d; margin-bottom: 25px; }
+  form { display: flex; gap: 10px; margin-bottom: 10px; }
+  input[type=text] { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #ddd; font-size: 1em; }
+  button { padding: 12px 22px; border: none; border-radius: 10px; background: #ff9500; color: white; font-weight: 600; cursor: pointer; }
+  button:disabled { background: #ccc; }
+  button.secondary { background: #2c3e50; }
+  label.check { display: flex; align-items: center; gap: 6px; font-size: 0.9em; color: #555; margin-bottom: 20px; }
+  .offre { padding: 14px 16px; border-radius: 12px; border: 1px solid #eee; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .offre.bonne { border-left: 5px solid #27ae60; background: #f4fdf6; }
+  .offre .titre { font-weight: 600; font-size: 0.95em; }
+  .offre .meta { font-size: 0.8em; color: #7f8c8d; }
+  .prix { font-weight: 700; font-size: 1.1em; white-space: nowrap; }
+  .badge-fake { background: #fff3e0; color: #b8600a; padding: 2px 8px; border-radius: 6px; font-size: 0.75em; font-weight: 600; }
+  .badge-ok { color: #27ae60; font-size: 0.75em; }
+  .warning { background: #fff3e0; border-left: 5px solid #ff9500; padding: 12px 16px; border-radius: 0 12px 12px 0; margin: 15px 0; font-size: 0.9em; }
+  .section-title { font-weight: 700; margin: 20px 0 10px; color: #2c3e50; }
+  #status { color: #7f8c8d; font-size: 0.9em; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 2px solid #eee; }
+  .tab { padding: 10px 16px; cursor: pointer; font-weight: 600; color: #7f8c8d; border-bottom: 3px solid transparent; }
+  .tab.active { color: #ff9500; border-bottom-color: #ff9500; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .marge { font-size: 0.75em; color: #27ae60; font-weight: 600; }
+  .annonce-box { margin-top: 8px; padding: 10px; background: #f9f9f9; border-radius: 8px; font-size: 0.85em; }
+  .statut { font-size: 0.75em; padding: 2px 8px; border-radius: 6px; background: #eee; color: #555; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>🎯 DealHunter</h1>
+  <p class="subtitle">Comparateur — recommandation d'achat — revente</p>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="comparateur">Comparateur</div>
+    <div class="tab" data-tab="recommandation">Recommandation d'achat</div>
+    <div class="tab" data-tab="revente">Revente</div>
+  </div>
+
+  <!-- ONGLET COMPARATEUR -->
+  <div class="panel active" id="panel-comparateur">
+    <form id="searchForm">
+      <input type="text" id="query" placeholder="Ex : iPhone 13 128Go" required>
+      <button type="submit" id="submitBtn">Chercher</button>
+    </form>
+    <label class="check">
+      <input type="checkbox" id="verify"> Vérification IA des bonnes affaires (plus lent, détecte les annonces suspectes)
+    </label>
+
+    <div id="status"></div>
+    <div id="results"></div>
+  </div>
+
+  <!-- ONGLET RECOMMANDATION D'ACHAT -->
+  <div class="panel" id="panel-recommandation">
+    <p class="subtitle">Les bonnes affaires de ta dernière recherche. Clique "Acheter" pour ouvrir le lien et tracker l'achat dans Google Sheets.</p>
+    <div id="recoStatus" class="warning" style="display:none"></div>
+    <div id="recoResults"></div>
+  </div>
+
+  <!-- ONGLET REVENTE -->
+  <div class="panel" id="panel-revente">
+    <p class="subtitle">Objets achetés, avec prix de revente calculé pour garantir la marge minimum.</p>
+    <button id="refreshAchats" class="secondary">Rafraîchir</button>
+    <div id="reventeStatus" style="margin-top:10px"></div>
+    <div id="reventeResults"></div>
+  </div>
+</div>
+
+<script>
+// Remplace par l'URL de ton service DealHunter API déployé sur Render
+const API_URL = "https://dealhunter-api.onrender.com";
+
+let derniereRecherche = null; // conserve le dernier résultat /search pour l'onglet Recommandation
+
+// --- Navigation onglets ---
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'recommandation') renderRecommandation();
+    if (tab.dataset.tab === 'revente') chargerAchats();
+  });
+});
+
+// --- ONGLET COMPARATEUR ---
+const form = document.getElementById('searchForm');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const btn = document.getElementById('submitBtn');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = document.getElementById('query').value.trim();
+  const verify = document.getElementById('verify').checked;
+  if (!q) return;
+
+  btn.disabled = true;
+  resultsEl.innerHTML = '';
+  statusEl.textContent = verify ? '🔍 Recherche + vérification IA en cours (peut prendre 15-20s)…' : '🔍 Recherche en cours…';
+
+  try {
+    const url = `${API_URL}/search?q=${encodeURIComponent(q)}&verify=${verify}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Erreur ${resp.status}`);
+    const data = await resp.json();
+    derniereRecherche = data;
+    render(data);
+  } catch (err) {
+    statusEl.textContent = '';
+    resultsEl.innerHTML = `<div class="warning">❌ Impossible de contacter l'API DealHunter (${err.message}). Le service Render met parfois ~1 min à se réveiller — réessaie.</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function render(data) {
+  statusEl.textContent = '';
+  let html = '';
+
+  if (!data.cle_serpapi_configuree) {
+    html += `<div class="warning">⚠️ Clé SerpAPI non configurée côté serveur — aucun résultat neuf disponible.</div>`;
+  }
+  if (data.sources_indisponibles && data.sources_indisponibles.length) {
+    html += `<div class="warning">⚠️ Sources indisponibles pour cette recherche : ${data.sources_indisponibles.join(', ')}. Les résultats ci-dessous ne portent que sur les sources réellement interrogées avec succès.</div>`;
+  }
+
+  if (data.prix_neuf_min) {
+    html += `<div class="section-title">Prix neuf le plus bas : ${data.prix_neuf_min} €</div>`;
+  }
+
+  if (data.bonnes_affaires && data.bonnes_affaires.length) {
+    html += `<div class="section-title">💰 Bonnes affaires détectées</div>`;
+    data.bonnes_affaires.forEach(o => html += offreHtml(o, true));
+    html += `<div class="warning">👉 Retrouve ces bonnes affaires avec un bouton "Acheter" dans l'onglet <b>Recommandation d'achat</b>.</div>`;
+  }
+
+  if (data.offres_occasion && data.offres_occasion.length) {
+    html += `<div class="section-title">Toutes les offres d'occasion</div>`;
+    data.offres_occasion.forEach(o => {
+      if (!data.bonnes_affaires.includes(o)) html += offreHtml(o, false);
+    });
+  } else {
+    html += `<div class="warning">Aucune offre d'occasion trouvée (eBay/BackMarket indisponibles ou pas de résultat pour cette recherche).</div>`;
+  }
+
+  resultsEl.innerHTML = html || '<p>Aucun résultat.</p>';
+}
+
+function offreHtml(o, bonne) {
+  const verif = o.verification_ia
+    ? (o.verification_ia.suspect
+        ? `<div class="badge-fake">⚠️ suspect : ${o.verification_ia.raison}</div>`
+        : `<div class="badge-ok">✓ vérifié IA</div>`)
+    : '';
+  return `
+    <div class="offre ${bonne ? 'bonne' : ''}">
+      <div>
+        <div class="titre">${o.titre}</div>
+        <div class="meta">${o.site} · ${o.etat || ''} ${o.reduction_pct ? '· -' + o.reduction_pct + '%' : ''}</div>
+        ${verif}
+      </div>
+      <div style="text-align:right">
+        <div class="prix">${o.prix} €</div>
+        <a href="${o.url}" target="_blank" style="font-size:0.8em">Voir l'annonce →</a>
+      </div>
+    </div>`;
+}
+
+// --- ONGLET RECOMMANDATION D'ACHAT ---
+function renderRecommandation() {
+  const statusBox = document.getElementById('recoStatus');
+  const container = document.getElementById('recoResults');
+
+  if (!derniereRecherche || !derniereRecherche.bonnes_affaires || !derniereRecherche.bonnes_affaires.length) {
+    statusBox.style.display = 'block';
+    statusBox.textContent = "Aucune bonne affaire en mémoire — fais d'abord une recherche dans l'onglet Comparateur.";
+    container.innerHTML = '';
+    return;
+  }
+  statusBox.style.display = 'none';
+
+  container.innerHTML = derniereRecherche.bonnes_affaires.map((o, i) => `
+    <div class="offre bonne" id="reco-${i}">
+      <div>
+        <div class="titre">${o.titre}</div>
+        <div class="meta">${o.site} · ${o.etat || ''} · -${o.reduction_pct}% vs neuf</div>
+      </div>
+      <div class="actions">
+        <div class="prix">${o.prix} €</div>
+        <button onclick="acheter(${i})" data-role="buy-btn">🛒 Acheter</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function acheter(i) {
+  const o = derniereRecherche.bonnes_affaires[i];
+  const card = document.getElementById(`reco-${i}`);
+  const btn = card.querySelector('[data-role="buy-btn"]');
+  btn.disabled = true;
+  btn.textContent = '...';
+
+  try {
+    const resp = await fetch(`${API_URL}/achat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        titre: o.titre, prix: o.prix, site: o.site, url: o.url, image: o.image || '', etat: o.etat || ''
+      })
+    });
+    const data = await resp.json();
+    window.open(o.url, '_blank');
+    btn.textContent = data.tracked_in_sheets ? '✓ Suivi dans Sheets' : '✓ Acheté (Sheets non configuré)';
+    card.insertAdjacentHTML('beforeend', `<div class="marge">Revente conseillée ≥ ${data.prix_revente_min} €</div>`);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '🛒 Acheter';
+    alert(`Erreur lors du suivi de l'achat : ${err.message}`);
+  }
+}
+
+// --- ONGLET REVENTE ---
+document.getElementById('refreshAchats').addEventListener('click', chargerAchats);
+
+async function chargerAchats() {
+  const statusBox = document.getElementById('reventeStatus');
+  const container = document.getElementById('reventeResults');
+  statusBox.textContent = 'Chargement…';
+  container.innerHTML = '';
+
+  try {
+    const resp = await fetch(`${API_URL}/achats`);
+    const data = await resp.json();
+    const achats = data.achats || [];
+
+    if (!achats.length) {
+      statusBox.innerHTML = `<div class="warning">Aucun achat tracké pour l'instant (ou GOOGLE_SHEET_WEBHOOK_URL non configurée côté serveur).</div>`;
+      return;
+    }
+    statusBox.textContent = '';
+
+    container.innerHTML = achats.map((a, i) => `
+      <div class="offre" id="achat-${i}">
+        <div>
+          <div class="titre">${a.titre}</div>
+          <div class="meta">Acheté ${a.prix_achat} € sur ${a.site} · <span class="statut">${a.statut || 'a_revendre'}</span></div>
+          ${a.annonce_titre ? `<div class="annonce-box"><b>${a.annonce_titre}</b><br>${a.annonce_description}<br><b>Prix conseillé : ${a.prix_conseille} €</b></div>` : ''}
+        </div>
+        <div class="actions">
+          <div class="marge">Revente ≥ ${a.prix_revente_suggere} €</div>
+          ${!a.annonce_titre ? `<button onclick='genererAnnonce(${i}, ${JSON.stringify(a).replace(/'/g, "&apos;")})' data-role="gen-btn">✨ Générer l'annonce</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    statusBox.innerHTML = `<div class="warning">❌ Impossible de charger les achats (${err.message}).</div>`;
+  }
+}
+
+async function genererAnnonce(i, a) {
+  const card = document.getElementById(`achat-${i}`);
+  const btn = card.querySelector('[data-role="gen-btn"]');
+  btn.disabled = true;
+  btn.textContent = '✨ Génération…';
+
+  try {
+    const resp = await fetch(`${API_URL}/generer-annonce`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: a.id, titre: a.titre, prix_achat: a.prix_achat, etat: a.etat })
+    });
+    if (!resp.ok) throw new Error(`Erreur ${resp.status}`);
+    await chargerAchats();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "✨ Générer l'annonce";
+    alert(`Erreur génération annonce : ${err.message}`);
+  }
+}
+</script>
+</body>
+</html>
